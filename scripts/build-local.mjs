@@ -12,6 +12,20 @@ const NO_VERIFY = process.env.NO_VERIFY === "1";
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "opus";
 const readSafe = async (p) => { try { return await readFile(p, "utf8"); } catch { return ""; } };
 
+// ── .env + Supabase 개입(steering) ────────────────────────────
+async function loadDotEnv() {
+  try { await access(".env"); } catch { return; }
+  for (const line of (await readFile(".env", "utf8")).split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+  }
+}
+await loadDotEnv();
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const STEERING_ENABLED = !!(SUPABASE_URL && SUPABASE_KEY);
+const NOVEL_ID = "murim";
+
 const SERIES_TITLE = "신을 먹는 자";
 const TARGET = 100;
 
@@ -62,6 +76,29 @@ const synopsisTail = SYNOPSIS.split(/\r?\n/).filter((l) => l.trim().startsWith("
 
 if (!WORLD || !STATE) { console.error("canon/world.md 또는 state.md 가 없음 — 시드를 먼저"); process.exit(1); }
 
+// ── 독자 개입 (Supabase, novel_id=murim 스코핑) ──────────────
+async function fetchSteering() {
+  if (!STEERING_ENABLED) return [];
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/novel_steering?status=eq.pending&novel_id=eq.${NOVEL_ID}&order=created_at.asc&select=id,note`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+    if (!r.ok) { console.warn(`개입 fetch HTTP ${r.status}`); return []; }
+    return await r.json();
+  } catch (e) { console.warn(`개입 fetch 오류: ${e.message}`); return []; }
+}
+async function markApplied(ids) {
+  if (!STEERING_ENABLED || !ids.length) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/novel_steering?id=in.(${ids.join(",")})`, {
+      method: "PATCH",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ status: "applied", applied_episode: slug, applied_at: new Date().toISOString() }),
+    });
+  } catch (e) { console.warn(`applied 오류: ${e.message}`); }
+}
+const steering = await fetchSteering();
+const steeringText = steering.map((s, i) => `${i + 1}. ${String(s.note).trim()}`).join("\n");
+
 const STYLE = `# 선협·신화 무협 문법 — 재미가 1순위 (반드시 준수)
 - **첫 3줄 후킹**: 즉시 끌어당겨라(포식 장면/사패성/위기). 풍경 묘사로 느리게 시작 금지.
 - **사이다 ≥ 1**: 매 화 1회 이상, [[묵야]]가 강자(신·요괴·고수)를 압도하거나 먹어 도약하는 통쾌함.
@@ -101,6 +138,8 @@ ${synopsisTail || "(없음 — 1화)"}
 
 # 직전 화 본문
 ${lastBody || "(없음 — 1화. state.md의 '다음 화 방향'으로 강렬하게 연다)"}
+
+${steeringText ? `# ⚡ 독자(작가) 개입 — 이번 화에 반드시 반영\n${steeringText}\n→ 자연스럽게 녹이되 캐논·연속성·차별점은 유지.` : "# 독자 개입\n(없음 — state.md의 '다음 화 방향'으로 자연스럽게 이어가세요.)"}
 ${retryNote ? `\n# ⚠️ 직전 시도가 다음 문제를 냄 — 피해서 다시\n${retryNote}\n` : ""}
 ${STYLE}
 
@@ -121,7 +160,7 @@ ${STYLE}
 주의: new_characters name 은 기존(${characters.map((c) => c.name).join(", ")})과 겹치면 안 됨(그건 character_logs). 캐논 인물 정체 변경 금지.`;
 }
 
-console.log(`[무협] 회차: ${nextEp}화 (${slug}) · 인물 ${characters.length} · 모델 ${CLAUDE_MODEL}`);
+console.log(`[무협] 회차: ${nextEp}화 (${slug}) · 개입 ${steering.length}건 · 인물 ${characters.length} · 모델 ${CLAUDE_MODEL}`);
 const prompt0 = buildPrompt("");
 console.log(`Prompt: ${(Buffer.byteLength(prompt0, "utf8") / 1024).toFixed(1)} KB`);
 if (DRY_RUN) { console.log("=== DRY RUN ===\n" + prompt0.slice(0, 3000) + `\n...(전체 ${prompt0.length}자)`); process.exit(0); }
@@ -244,6 +283,10 @@ for (const cl of data.character_logs || []) {
   const entry = `- ${nextEp}화: ${stripLog(line)}`;
   await writeFile(path, cur.includes("## 변화 로그") ? cur.replace(/\s*$/, "") + "\n" + entry + "\n" : cur.replace(/\s*$/, "") + "\n\n## 변화 로그\n" + entry + "\n");
 }
+
+// 개입 applied
+await markApplied(steering.map((s) => s.id));
+if (steering.length) console.log(`개입 ${steering.length}건 applied`);
 
 // index.md
 const files = (await readdir(".")).filter((f) => /^\d{4}-\d{2}-\d{2}_\d+\.md$/.test(f));
