@@ -63,6 +63,11 @@ const lastBody = lastFile ? bodyOf(await readSafe(lastFile)) : "";
 // ── 캐논 ──────────────────────────────────────────────────────
 const PREMISE = await readSafe("canon/premise.md");
 const ARC = await readSafe("canon/arc.md");
+const REVIEW = await readSafe("review.md");          // 편집자 리뷰 — 다음 화 생성 지침 자동 반영(자가발전)
+const reviewGuide = (() => {
+  const m = REVIEW.match(/##\s*다음 화 생성 지침\s*([\s\S]*?)(?:\n##\s|$)/);
+  return m ? m[1].trim() : "";
+})();
 const WORLD = await readSafe("canon/world.md");
 let charFiles = [];
 try { charFiles = (await readdir("canon/characters")).filter((f) => f.endsWith(".md")); } catch {}
@@ -140,6 +145,7 @@ ${synopsisTail || "(없음 — 1화)"}
 ${lastBody || "(없음 — 1화. state.md의 '다음 화 방향'으로 강렬하게 연다)"}
 
 ${steeringText ? `# ⚡ 독자(작가) 개입 — 이번 화에 반드시 반영\n${steeringText}\n→ 자연스럽게 녹이되 캐논·연속성·차별점은 유지.` : "# 독자 개입\n(없음 — state.md의 '다음 화 방향'으로 자연스럽게 이어가세요.)"}
+${reviewGuide ? `# 📝 편집 지침 (최근 리뷰 반영 — 반드시 적용)\n${reviewGuide}\n` : ""}
 ${retryNote ? `\n# ⚠️ 직전 시도가 다음 문제를 냄 — 피해서 다시\n${retryNote}\n` : ""}
 ${STYLE}
 

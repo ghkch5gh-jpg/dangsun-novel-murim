@@ -10,6 +10,8 @@ Log "==== start ===="
 git pull --quiet origin main *>> $log
 node scripts/build-local.mjs *>> $log
 if ($LASTEXITCODE -ne 0) { Log "generator failed (exit $LASTEXITCODE)"; exit 1 }
+node scripts/review.mjs *>> $log
+if ($LASTEXITCODE -ne 0) { Log "review failed (exit $LASTEXITCODE) — skip" }
 git add -A *>> $log
 git diff --cached --quiet
 if ($LASTEXITCODE -ne 0) {
