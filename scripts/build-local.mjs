@@ -215,25 +215,40 @@ async function funScore(body) {
   return { ok: !weak, scores: s, sum, fix: String(j.fix || "").trim() };
 }
 
-let data = null, verdict = null, fun = null;
+// ── 문체 린트 (결정론적 가드) ─────────────────────────────────
+// 모델이 직전 화의 이탤릭·"박자" 손버릇을 눈덩이처럼 따라하는 걸 코드로 차단(프롬프트 지시만으론 못 막힘).
+const ITALIC_MAX = 6;     // *...* 강조 화당 최대치(절대 상한)
+const BAKJA_MAX = 3;      // "박자" 표현 화당 최대치(무협은 타격 리듬 표현 여지로 살짝 여유)
+function styleLint(body) {
+  const italics = (body.match(/(?<!\*)\*(?!\*)[^*\n]+?\*(?!\*)/g) || []).length; // *강조*만(**볼드** 제외)
+  const bakja = (body.match(/박자/g) || []).length;
+  const issues = [];
+  if (italics > ITALIC_MAX) issues.push(`- [문체/이탤릭] *강조*를 ${italics}개 썼다(상한 ${ITALIC_MAX}). 화당 ${ITALIC_MAX}개 이하. 정말 결정적인 단어만 남기고 평문으로. 평범한 단어 강조 금지.`);
+  if (bakja > BAKJA_MAX) issues.push(`- [문체/반복] "박자"를 ${bakja}번 썼다(상한 ${BAKJA_MAX}). 손버릇이다. 다른 표현(찰나·한 호흡·반 보·순간)으로 분산하거나 삭제.`);
+  return { ok: issues.length === 0, italics, bakja, issues };
+}
+
+let data = null, verdict = null, fun = null, lint = null;
 for (let attempt = 0; attempt < 2; attempt++) {
   let retryNote = "";
   if (attempt > 0) {
     const notes = (verdict?.contradictions || []).filter((c) => c.severity === "hard").map((c) => `- [모순/${c.type}] ${c.detail}`);
     if (fun && !fun.ok) notes.push(`- [재미] ${JSON.stringify(fun.scores)} — ${fun.fix || "후킹·사이다·차별점 강화"}`);
+    if (lint && !lint.ok) notes.push(...lint.issues);
     retryNote = notes.join("\n");
   }
-  console.log(attempt === 0 ? "생성 호출..." : "재생성(모순/재미 보강)...");
+  console.log(attempt === 0 ? "생성 호출..." : "재생성(모순/재미/문체 보강)...");
   const raw = await callClaude(buildPrompt(retryNote));
   const d = parseJson(raw, "생성");
   if (!d || !d.body_md || String(d.body_md).trim().length < 400) { console.error("본문 부실 — 재시도"); continue; }
   const body = String(d.body_md).trim();
   [verdict, fun] = await Promise.all([verify(body, String(d.threads_md || THREADS)), funScore(body)]);
+  lint = styleLint(body);
   const hard = verdict.contradictions.filter((c) => c.severity === "hard");
-  console.log(`  연속성: 모순 ${verdict.contradictions.length}(하드 ${hard.length}) · 재미: ${fun.ok ? "pass" : "weak"} ${JSON.stringify(fun.scores)}${fun.sum ? " 합 " + fun.sum : ""}`);
+  console.log(`  연속성: 모순 ${verdict.contradictions.length}(하드 ${hard.length}) · 재미: ${fun.ok ? "pass" : "weak"} ${JSON.stringify(fun.scores)}${fun.sum ? " 합 " + fun.sum : ""} · 문체: ${lint.ok ? "ok" : "위반"}(이탤릭 ${lint.italics}/박자 ${lint.bakja})`);
   data = d;
-  if (!hard.length && fun.ok) break;
-  if (attempt === 1) { if (hard.length) console.warn("⚠️ 하드 모순 잔존"); if (!fun.ok) console.warn(`⚠️ 재미 미달 잔존(합 ${fun.sum})`); }
+  if (!hard.length && fun.ok && lint.ok) break;
+  if (attempt === 1) { if (hard.length) console.warn("⚠️ 하드 모순 잔존"); if (!fun.ok) console.warn(`⚠️ 재미 미달 잔존(합 ${fun.sum})`); if (!lint.ok) console.warn(`⚠️ 문체 위반 잔존(이탤릭 ${lint.italics}/박자 ${lint.bakja})`); }
 }
 if (!data) { console.error("생성 실패"); process.exit(1); }
 
