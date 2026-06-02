@@ -174,7 +174,7 @@ if (DRY_RUN) { console.log("=== DRY RUN ===\n" + prompt0.slice(0, 3000) + `\n...
 function callClaude(promptText) {
   return new Promise((resolve, reject) => {
     const child = spawn("claude", ["-p", "--output-format", "text", "--allowedTools", "", "--model", CLAUDE_MODEL], { stdio: ["pipe", "pipe", "inherit"], shell: true });
-    let out = ""; const timer = setTimeout(() => { child.kill(); reject(new Error("타임아웃 5분")); }, 5 * 60 * 1000);
+    let out = ""; const timer = setTimeout(() => { child.kill(); reject(new Error("타임아웃 12분")); }, 12 * 60 * 1000);
     child.stdout.on("data", (d) => (out += d.toString()));
     child.on("error", (e) => { clearTimeout(timer); reject(e); });
     child.on("close", (c) => { clearTimeout(timer); c === 0 ? resolve(out) : reject(new Error(`claude exit ${c}`)); });
