@@ -171,7 +171,9 @@ ${STYLE}
 console.log(`[무협] 회차: ${nextEp}화 (${slug}) · 개입 ${steering.length}건 · 인물 ${characters.length} · Codex ${CODEX_MODEL || "default"}/${CODEX_REASONING_EFFORT}`);
 const prompt0 = buildPrompt("");
 console.log(`Prompt: ${(Buffer.byteLength(prompt0, "utf8") / 1024).toFixed(1)} KB`);
-if (DRY_RUN) { console.log("=== DRY RUN ===\n" + prompt0.slice(0, 3000) + `\n...(전체 ${prompt0.length}자)`); process.exit(0); }
+if (DRY_RUN) {
+  console.log("=== DRY RUN ===\n" + prompt0.slice(0, 3000) + `\n...(전체 ${prompt0.length}자)`);
+} else {
 
 function callCodex(promptText) {
   return new Promise((resolve, reject) => {
@@ -354,3 +356,4 @@ ${entries.join("\n")}
 신·요괴·난신이 실재하는 중원에서, 신을 먹어 강해지는 금기의 식신자 묵야의 이야기. 직전 화와 누적 캐논(세계관·인물·아크)을 이어받아 매일 자동 생성되고, 매 화 연속성·재미 점검을 거칩니다.
 `);
 console.log(`index.md 갱신 (${files.length}회차)`);
+}
