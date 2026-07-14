@@ -2,14 +2,16 @@
 // 무협 웹소설 생성기 — 선협·신화 무협 ("신을 먹는 자"). 락드 canon + append-only + 연속성/재미 채점 + 100화 아크.
 // dangsun.kr/novel/murim 렌더. 회귀물이 아니라 timeline 없음(WORLD 기반).
 //
-//   DRY_RUN=1 : 프롬프트만   FORCE=1 : 오늘 회차 있어도 강제   CLAUDE_MODEL=sonnet   NO_VERIFY=1 : 체크 끔
+//   DRY_RUN=1 : 프롬프트만   FORCE=1 : 오늘 회차 있어도 강제   NO_VERIFY=1 : 체크 끔
+//   CODEX_MODEL=<선택>   CODEX_REASONING_EFFORT=low|medium|high|xhigh
 
 import { readFile, writeFile, readdir, access, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 
 const DRY_RUN = process.env.DRY_RUN === "1";
 const NO_VERIFY = process.env.NO_VERIFY === "1";
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "opus";
+const CODEX_MODEL = process.env.CODEX_MODEL || "";
+const CODEX_REASONING_EFFORT = process.env.CODEX_REASONING_EFFORT || "high";
 const readSafe = async (p) => { try { return await readFile(p, "utf8"); } catch { return ""; } };
 
 // ── .env + Supabase 개입(steering) ────────────────────────────
@@ -166,18 +168,21 @@ ${STYLE}
 주의: new_characters name 은 기존(${characters.map((c) => c.name).join(", ")})과 겹치면 안 됨(그건 character_logs). 캐논 인물 정체 변경 금지.`;
 }
 
-console.log(`[무협] 회차: ${nextEp}화 (${slug}) · 개입 ${steering.length}건 · 인물 ${characters.length} · 모델 ${CLAUDE_MODEL}`);
+console.log(`[무협] 회차: ${nextEp}화 (${slug}) · 개입 ${steering.length}건 · 인물 ${characters.length} · Codex ${CODEX_MODEL || "default"}/${CODEX_REASONING_EFFORT}`);
 const prompt0 = buildPrompt("");
 console.log(`Prompt: ${(Buffer.byteLength(prompt0, "utf8") / 1024).toFixed(1)} KB`);
 if (DRY_RUN) { console.log("=== DRY RUN ===\n" + prompt0.slice(0, 3000) + `\n...(전체 ${prompt0.length}자)`); process.exit(0); }
 
-function callClaude(promptText) {
+function callCodex(promptText) {
   return new Promise((resolve, reject) => {
-    const child = spawn("claude", ["-p", "--output-format", "text", "--allowedTools", "", "--model", CLAUDE_MODEL], { stdio: ["pipe", "pipe", "inherit"], shell: true });
+    const args = ["exec", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", "--sandbox", "read-only", "-c", `model_reasoning_effort=${CODEX_REASONING_EFFORT}`];
+    if (CODEX_MODEL) args.push("--model", CODEX_MODEL);
+    args.push("-");
+    const child = spawn(process.platform === "win32" ? "codex.cmd" : "codex", args, { stdio: ["pipe", "pipe", "inherit"], shell: process.platform === "win32", windowsHide: true });
     let out = ""; const timer = setTimeout(() => { child.kill(); reject(new Error("타임아웃 12분")); }, 12 * 60 * 1000);
     child.stdout.on("data", (d) => (out += d.toString()));
     child.on("error", (e) => { clearTimeout(timer); reject(e); });
-    child.on("close", (c) => { clearTimeout(timer); c === 0 ? resolve(out) : reject(new Error(`claude exit ${c}`)); });
+    child.on("close", (c) => { clearTimeout(timer); c === 0 ? resolve(out) : reject(new Error(`codex exit ${c}`)); });
     child.stdin.write(promptText); child.stdin.end();
   });
 }
@@ -195,7 +200,7 @@ async function verify(body, threadsNew) {
 # 캐논\n## 세계관\n${WORLD}\n## 인물\n${CHARS_FULL}
 # 이전 떡밥\n${THREADS}\n# 새 떡밥\n${threadsNew}\n# 새 화\n${body}
 # 출력\n{ "contradictions": [ {"type":"world|character|thread","detail":"...","severity":"hard|soft"} ], "ok": true/false }`;
-  let raw; try { raw = await callClaude(v); } catch (e) { console.warn(`연속성 호출 실패: ${e.message}`); return { contradictions: [], ok: true }; }
+  let raw; try { raw = await callCodex(v); } catch (e) { console.warn(`연속성 호출 실패: ${e.message}`); return { contradictions: [], ok: true }; }
   const j = parseJson(raw, "검증"); if (!j) return { contradictions: [], ok: true };
   return { contradictions: Array.isArray(j.contradictions) ? j.contradictions : [], ok: j.ok !== false };
 }
@@ -207,7 +212,7 @@ async function funScore(body) {
 # 한 끗\n${PREMISE}\n# 새 화\n${body}
 # 출력\n{ "hook":n,"cider":n,"cliff":n,"pace":n,"distinct":n,"verdict":"pass|weak","fix":"약하면 처방 1~2줄, 좋으면 빈문자열" }
 판정: hook<3 또는 cider<3 또는 distinct<3 또는 합<16 이면 weak.`;
-  let raw; try { raw = await callClaude(f); } catch (e) { console.warn(`재미 호출 실패: ${e.message}`); return { ok: true, scores: {}, fix: "" }; }
+  let raw; try { raw = await callCodex(f); } catch (e) { console.warn(`재미 호출 실패: ${e.message}`); return { ok: true, scores: {}, fix: "" }; }
   const j = parseJson(raw, "재미"); if (!j) return { ok: true, scores: {}, fix: "" };
   const s = { hook: +j.hook || 0, cider: +j.cider || 0, cliff: +j.cliff || 0, pace: +j.pace || 0, distinct: +j.distinct || 0 };
   const sum = s.hook + s.cider + s.cliff + s.pace + s.distinct;
@@ -238,7 +243,7 @@ for (let attempt = 0; attempt < 2; attempt++) {
     retryNote = notes.join("\n");
   }
   console.log(attempt === 0 ? "생성 호출..." : "재생성(모순/재미/문체 보강)...");
-  const raw = await callClaude(buildPrompt(retryNote));
+  const raw = await callCodex(buildPrompt(retryNote));
   const d = parseJson(raw, "생성");
   if (!d || !d.body_md || String(d.body_md).trim().length < 400) { console.error("본문 부실 — 재시도"); continue; }
   const body = String(d.body_md).trim();
